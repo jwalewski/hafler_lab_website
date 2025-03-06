@@ -1,0 +1,13 @@
+name: sample-tracker-app
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - streamlit
+  - pandas
+  - plotly
+  - seaborn   # Optional, in case you want non-plotly plots
+  - matplotlib
+  - openpyxl  # If you ever need to handle Excel files
+  - numpy  # If you ever need to handle Excel files
