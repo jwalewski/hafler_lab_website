@@ -7,6 +7,7 @@ from typing import Union
 from datetime import datetime
 import logging
 import sys
+import io
 import plotly.express as px
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)  # Clear existing handlers
@@ -18,15 +19,15 @@ def main():
     input_filename="DanaFarberAliquots_24_12_16.csv"#"22-535 sample tracking.csv"#
     import_style="Freezer_Works_Export" #Implemented options are "DF", "SF", "Freezer_Works_Import", and "Freezer_Works_Export"
     export_style="Patient_Report" #Implemented options are "Freezer_Works_Import", "Sample_Map", "Patient_Report"
-    output_filepath="../data/exports/"
-    output_filename=f"TEST_{export_style}.csv" #Can be left blank as well
+    #output_filepath="../data/exports/"
+    #output_filename=f"TEST_{export_style}.csv" #Can be left blank as well
     row_offset=0 #Determines which row will be the column names of the pandas dataframe. Should be 1 for DF, 0 for FW Export
-    intermediate_dataframe=read_file(input_dataframe_filepath=input_filepath, input_data_filename=input_filename, import_style=import_style, row_offset=row_offset) #The return type is called intermediate_dataframe because another dataframe is created in .write() that is actually exported 
-    export_dataframe(input_dataframe=intermediate_dataframe, output_filepath=output_filepath+output_filename, output_filename=output_filename, style=export_style)
+    #intermediate_dataframe=read_file(input_dataframe_filepath=input_filepath, input_data_filename=input_filename, import_style=import_style, row_offset=row_offset) #The return type is called intermediate_dataframe because another dataframe is created in .write() that is actually exported 
+    #export_dataframe(input_dataframe=intermediate_dataframe, output_filepath=output_filepath+output_filename, output_filename=output_filename, style=export_style)
 
 #################### I/O FUNCTIONS ###############
 
-def read_file(input_dataframe_filepath: str, input_data_filename:str, import_style:str, row_offset:Union[int, None]=None) -> pandas.DataFrame: #alternate datatypes could be pandas dataframes, both for the lists and each element
+def read_file(input_data_filename:str, import_style:str, row_offset:Union[int, None]=None) -> pandas.DataFrame: #alternate datatypes could be pandas dataframes, both for the lists and each element
     """Reads in a csv file from varying sources (dependent on "style") and returns a pandas dataframe in a freezerworks-like format, minus the headers"""
     #We start each instance by reading in a file
     output_columns = [
@@ -274,6 +275,7 @@ def read_file(input_dataframe_filepath: str, input_data_filename:str, import_sty
         #Note, technically ones exported straight from FW will have the headers still in and an empty row in the indexes, so they should have headers and indices of 0      
         try:
             current_dataframe =current_dataframe[output_columns]
+            current_dataframe["(HaflerLab) Substudy Visit"].apply(lambda x: "PRE07" if "PRE7" else x) #Cast PRE7 visits as PRE07
             return current_dataframe
         except Exception:
             raise Exception(f"The input dataframe has column names {current_dataframe.columns}, while it should have the following names: {output_columns}")
@@ -455,6 +457,11 @@ def export_dataframe(input_dataframe: pandas.DataFrame, style:str="Freezer_Works
     else:
         raise Exception("Invalid Style Given.")
     
+def convert_df_to_csv(df):
+    output = io.BytesIO()
+    df.to_csv(output, index=False)
+    return output.getvalue()
+    
 ######## ADD/MODIFY SAMPLE PAGE #########
 def generate_ascii_aliquot_id(patient_id, visit, sample_type, volume, aliquot_index=0):#need some way to keep track of and incrememnt aliquot index
     id_string = f"{patient_id}{visit}{sample_type}{volume}"
@@ -559,34 +566,95 @@ def plot_patient_samples_and_amounts(df, patient_id, visit_col, aliquot_col, amo
 
 
 ######### SUMMARY PAGE ##########
+def sort_patient_vists(df: pandas.DataFrame, visit_column_name:str, eot_label):
+    all_visits = df[visit_column_name].str.upper()  # Ensure all visit labels are uppercase
+    all_visits = df[visit_column_name].str.replace(" ","")  #remove all spaces from name
+
+
+    def visit_sort_key(visit):
+        # Special cases
+        special_cases = {
+            'ARC': -5,
+            'PRETRIAL': -4,
+            'PRE-TRIAL': -4,
+            'PRE14': -3,
+            'PRE10': -2,
+            'PRE7': -1,
+            'PRE0': 0,
+            'OR(PRE)': -0.5,
+            'OR(POST)': 0,
+            'SURG': 0,
+            'POD1': 9998,  # Second to last
+            eot_label: 9999    # Last entry
+        }
+        if visit in special_cases:
+            return special_cases[visit]
+
+        #In this order to ensure exactly one match
+        day_specific_match = re.match(r"V(\d+)D(\d+)", visit)
+        if day_specific_match:
+            print(f" The day specific match assigns a key value of: {int(day_specific_match.group(1))+ ((int(day_specific_match.group(2))-1)/100)} on input {visit}")
+            return (int(day_specific_match.group(1))+ ((int(day_specific_match.group(2))-1)/100)) #Will create a slightly higher key value for pts where the day isn't 1. Unless there are over 100 days in a visit, but this won't happen
+        standard_visit_match = re.match(r"V(\d+)", visit)
+        # Handle standard visit formats (e.g., V01D01)
+        if standard_visit_match: #Cannot be elif since the standard_visit_match check happens after the if block (to ensure it's not checked on samples with V01D01, for example)
+            return int(standard_visit_match.group(1))
+        # Handle day specific visit formats (e.g., V01D01)
+        else:
+            # Catch-all for unexpected formats
+            return float('inf')
+
+    # Sort and return
+    sorted_visits = sorted(all_visits, key=visit_sort_key)
+    print(f"New sorting function: sorted_visits is: {sorted_visits}")
+    df["visit_column_name_seed"] = sorted_visits
+    #df[visit_column_name] = pandas.Categorical(df[visit_column_name], categories= df["visit_column_name_seed"], ordered=True) #Forces ordering this way.
+
+    return df
+
 def plot_patient_retention(df, patient_col, visit_col):
     # Clean up the visit column — extra spaces are the enemy
-    df[visit_col] = df[visit_col].str.strip()
-
-    # Define your standard visit order
-    base_order = ['PRE14', 'PRE10', 'PRE07', 'OR', 'V00', 'V01', 'V02', 'V03', 'V04', 'V05', 'V06', 'V07', 'V08', 'V09', 'V10']
+    #df[visit_col] = df[visit_col].str.strip() #Attempting seeing how this without the strip
     eot_label = 'EOT'
 
-    # Identify what's actually in the data
-    actual_visits = df[visit_col].unique().tolist()
+    #Effectively old sorting function
+    # # Define your standard visit order
+    # base_order = ['PRE14', 'PRE10', 'PRE07', 'OR', 'V00', 'V01', 'V02', 'V03', 'V04', 'V05', 'V06', 'V07', 'V08', 'V09', 'V10']
 
-    # Split visits into:
-    # - standard ones (already in your order list)
-    # - unexpected ones (we'll just sort alphabetically)
-    standard_visits = [visit for visit in base_order if visit in actual_visits]
-    extra_visits = [visit for visit in actual_visits if visit not in base_order and visit != eot_label]
 
-    # Build final visit order: standard + unexpected (sorted) + EOT at the end if present
-    final_order = standard_visits + sorted(extra_visits)
-    if eot_label in actual_visits:
-        final_order.append(eot_label)
+    # # Identify what's actually in the data
+    # actual_visits = df[visit_col].unique().tolist()
+    # #print("This is actual_visits in the plot_patient_Retention function: ", actual_visits)
 
-    # Check for debugging if needed
-    print("Visit order being used:", final_order)
+    # # Split visits into:
+    # # - standard ones (already in your order list)
+    # # - unexpected ones (we'll just sort alphabetically)
+    # standard_visits = [visit for visit in base_order if visit in actual_visits]
+    # extra_visits = [visit for visit in actual_visits if visit not in base_order and visit != eot_label]
 
-    # Force the visit column to obey this exact order
-    df[visit_col] = pandas.Categorical(df[visit_col], categories=final_order, ordered=True)
+    # # Build final visit order: standard + unexpected (sorted) + EOT at the end if present
+    # #print(f"These are the extra visits {extra_visits} And here they are as a string: {str(extra_visits)}, and here they are sorted: {sorted(str(extra_visits))}")
+    # final_order = standard_visits + sorted((extra_visits)) #Will soon make a custom sorting function
+    # if eot_label in actual_visits:
+    #     final_order.append(eot_label)
 
+    # # Check for debugging if needed
+    # print("Visit order being used in the OLD FUNCTION FOR plot patient retention:", final_order)
+
+    # # Force the visit column to obey this exact order
+    # df[visit_col] = pandas.Categorical(df[visit_col], categories=final_order, ordered=True)
+
+
+
+
+
+
+
+    #new sorting function
+    df = sort_patient_vists(df, "(HaflerLab) Substudy Visit", eot_label)
+
+
+    #Compute retention from first visit
     first_visit = 'PRE14'  # Adjust if needed
     patient_count_initial = df[df[visit_col] == first_visit][patient_col].nunique()
 
@@ -629,7 +697,7 @@ def plot_samples_by_visit(df: pandas.DataFrame, visit_col: str, patient_col: str
         final_order.append(eot_label)
 
     # Check for debugging if needed
-    print("Visit order being used:", final_order)
+    print("Visit order being used in samples by visit:", final_order)
 
     # Force the visit column to obey this exact order
     df[visit_col] = pandas.Categorical(df[visit_col], categories=final_order, ordered=True)

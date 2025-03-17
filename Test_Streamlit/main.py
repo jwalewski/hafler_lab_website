@@ -3,15 +3,32 @@ import pandas
 import FreezerWorksScripts #Loads in custom functions from previous code
 import plotly.express as px
 
+#Page Config Designs
+
+streamlit.set_page_config(
+    page_title="Hafler Lab Sample Tracker",  # Custom tab name
+    page_icon="🧪",  # Custom emoji as favicon (or use a path to an image file) #"/path/to/file.png"
+)
+
+
 # App title
-streamlit.title("Hafler Lab Patient Sample Tracker")
+streamlit.title("Hafler Lab Sample Tracker")
 
 # Sidebar Controls
 with streamlit.sidebar:
     streamlit.header("Data Management")
-    uploaded_file = streamlit.file_uploader("Upload Sample Data (CSV)")
-    if streamlit.button("Download Processed Data"):
-        streamlit.success("Feature not implemented yet (but will trigger export logic)")
+    uploaded_df_file = streamlit.file_uploader("Upload Dana Farber Manifest (.csv ONLY)")
+    uploaded_sf_file = streamlit.file_uploader("Upload UCSF Manifest (.csv ONLY)")
+    uploaded_fw_file = streamlit.file_uploader("Upload Freezerworks Export (.csv in HaflerLab Export Format)")
+    # if streamlit.button("Download Processed Data"):
+    #     streamlit.success("Feature not implemented yet (but will trigger export logic)")
+    # streamlit.download_button(
+    #     label="Download Processed CSV",
+    #     data="test.csv",#convert_df_to_csv(df),
+    #     file_name="processed_data.csv",
+    #     mime="text/csv",
+    # )
+
 
 
 
@@ -21,22 +38,36 @@ with streamlit.sidebar:
 #################### DATA UPLOADING #################
 
 # Load data
-if uploaded_file:
+if uploaded_df_file or uploaded_fw_file or uploaded_fw_file:
     #current_dataframe = pd.read_csv(uploaded_file)
     #all of the logic for handling the imports goes here
 
     #Temporary hardcoding of parameters
-    import_style="DF" #DF is first to be implemented                         #Implemented options are "DF", "SF", "Freezer_Works_Import", and "Freezer_Works_Export"
+    if uploaded_df_file:
+        import_style="DF" #DF is first to be implemented                         #Implemented options are "DF", "SF", "Freezer_Works_Import", and "Freezer_Works_Export"
+        uploaded_file=uploaded_df_file
+        row_offset=1 #Determines which row will be the column names of the pandas dataframe. Should be 1 for DF, 0 for FW Export
+    elif uploaded_sf_file:
+        import_style="SF"
+        uploaded_file=uploaded_sf_file
+        row_offset=1                                        #IMPORTANT: 1 or 0???
+    elif uploaded_fw_file:
+        import_style="Freezer_Works_Export"
+        uploaded_file=uploaded_fw_file 
+        row_offset=0 
     export_style="Patient_Report" #Implemented options are "Freezer_Works_Import", "Sample_Map", "Patient_Report"
     output_filepath="../data/exports/"
     output_filename=f"TEST_{export_style}.csv" #Can be left blank as well
-    row_offset=1 #should only be 1 right now #Determines which row will be the column names of the pandas dataframe. Should be 1 for DF, 0 for FW Export
+    
     #
 
-    current_dataframe = FreezerWorksScripts.read_file("",uploaded_file, import_style, row_offset) #Building upon the FreezerWorksScripts repo I already have. The "" at the start is for the filepath - streamlit just loads the file into memory, so there's no actual path now
+    current_dataframe = FreezerWorksScripts.read_file(uploaded_file, import_style, row_offset) #Building upon the FreezerWorksScripts repo I already have. The "" at the start is for the filepath - streamlit just loads the file into memory, so there's no actual path now
     #I'll get the documentation to appear nomally soon, but in the meantime:
     #def read_file(input_dataframe_filepath: str, input_data_filename:str, import_style:str, row_offset:Union[int, None]=None) -> pandas.DataFrame:
     #
+     # Store processed data in session state
+    streamlit.session_state.processed_df = current_dataframe
+    streamlit.session_state.data_processed = True
 
 else:
     streamlit.warning("Upload a CSV to get started via the left side bar.")
@@ -163,4 +194,15 @@ with summary_stats_tab:
 # Optional: Save updated data back to file (could be hooked to sidebar button)
 # current_dataframe.to_csv("updated_samples.csv", index=False)
 
-FreezerWorksScripts.export_dataframe(current_dataframe)
+# Second Sidebar Block: Download Section
+with streamlit.sidebar:
+    if streamlit.session_state.data_processed:
+
+        streamlit.download_button(
+            label="Download Processed CSV",
+            data=FreezerWorksScripts.convert_df_to_csv(streamlit.session_state.processed_df),
+            file_name="processed_data.csv",
+            mime="text/csv",
+        )
+
+#FreezerWorksScripts.export_dataframe(current_dataframe)
